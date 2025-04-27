@@ -1,5 +1,5 @@
-from database import create_database, insert_invoice
-from invoice_processor import leer_facturas_excel, validar_factura
+from database import create_database, insert_invoice, obtener_historico_proveedor
+from invoice_processor import leer_facturas_excel, validar_factura, clasificar_factura
 from ia_anomaly_detection import detectar_anomalias
 import os
 import sqlite3
@@ -11,9 +11,9 @@ from report_generator import ReportGenerator
 def main():
 
     # --- RESET DE BASE DE DATOS (opcional, solo para desarrollo) ---
-    if os.path.exists("data/facturas.db"):
-        os.remove("data/facturas.db")  # Elimina la base de datos existente
-        print("🗑️ Base de datos anterior eliminada")
+    if not os.path.exists("data/facturas.db"):
+        create_database()  # Elimina la base de datos existente
+        print("🗑️ Base de datos creada")
 
     create_database()  # Crea una nueva estructura limpia
 
@@ -32,19 +32,43 @@ def main():
     anomalias = detectar_anomalias(montos)
     
     for i, factura in enumerate(facturas):
+
         errores = validar_factura(factura)
+
+        
         if not errores:
+            # Obtener histórico del proveedor
+            historico = obtener_historico_proveedor(factura["proveedor"]) 
+
+            # Clasificar la factura
+            estado, motivo = clasificar_factura(factura, historico)
+
+            if estado == "Pendiente":
+                print(f"⚡ [PENDIENTE] Factura {factura['numero_factura']} - {motivo}")
+            elif estado == "Rechazada":
+                print(f"❌ [RECHAZADA] Factura {factura['numero_factura']} - {motivo}")
+
+
             if factura["monto"] > 1000000:  # Umbral ajustable
                 print(f"⚠️ Alerta: Monto sospechoso en factura {factura['numero_factura']} (${factura['monto']})")
             if anomalias[i] == -1:
                 print(f"🚨 Alerta IA: Anomalía detectada en {factura['numero_factura']}")
-            
+                print(f"""\n
+                ⚡ Factura {factura['numero_factura']} - {estado}
+                -----------------------------------------
+                Proveedor: {factura['proveedor']}
+                Monto: ${factura['monto']:,}
+                Motivo: {motivo}
+                Acción requerida: {'Sí' if estado == 'Pendiente' else 'No'}
+                """)
             insert_invoice(
                 numero=factura["numero_factura"],
                 proveedor=factura["proveedor"],
                 monto=factura["monto"],
                 fecha=factura["fecha"],
-                anomalia=anomalias[i]
+                anomalia=anomalias[i],
+                estado=estado,
+                comentarios=motivo
             )
 
     
