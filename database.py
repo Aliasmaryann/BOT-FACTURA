@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import pandas as pd
 
 def create_database():
     try:
@@ -67,75 +68,109 @@ def create_database():
         if conn:
             conn.close()
 
-def insert_invoice(
-    numero_factura: str,
-    proveedor_id: int,
-    fecha_emision: str,
-    items: list,  # Lista de diccionarios con {producto, cantidad, precio_unitario}
-    fecha_vencimiento: str = None,
-    estado: str = "Pendiente",
-    anomalia: int = None,
-    comentarios: str = ""
-) -> int:
+def procesar_factura_excel(ruta: str) -> dict:
     """
-    Inserta una factura con su detalle en la base de datos.
-    
-    Args:
-        numero: Número único de factura
-        proveedor_id: ID del proveedor en la tabla proveedores
-        items: Lista de ítems [{"producto": str, "cantidad": float, "precio_unitario": float}]
-        fecha_emision: Fecha en formato YYYY-MM-DD
-        estado: 'Pendiente', 'Aprobada' o 'Rechazada'
-        anomalia: -1 (anomalía), 0 (no revisado), 1 (normal)
+    Procesa el archivo Excel con el nuevo formato y devuelve datos estructurados.
     
     Returns:
-        int: ID de la factura insertada
-    
-    Raises:
-        ValueError: Si los datos son inválidos
-        sqlite3.Error: Si hay error en la base de datos
+        {
+            "encabezado": {
+                "numero_factura": "F001",
+                "proveedor_id": 1,
+                "fecha_emision": "2025-04-10",
+                "comentarios": "30 días de plazo"
+            },
+            "items": [
+                {"producto": "Laptop 32\" LG", "cantidad": 2, "precio_unitario": 160000},
+                ...
+            ],
+            "totales": {
+                "iva": 60800,
+                "monto_total": 380800
+            }
+        }
     """
+    # Leer solo las celdas con datos
+    df = pd.read_excel(ruta, header=None, usecols="A:D", nrows=15).dropna(how="all")
+    
+    # Extraer encabezado (filas 1-4)
+    encabezado = {
+        "numero_factura": df.iloc[0, 1],
+        "proveedor_id": int(df.iloc[1, 1]),
+        "fecha_emision": df.iloc[2, 1].strftime("%Y-%m-%d"),
+        "comentarios": df.iloc[3, 1] if pd.notna(df.iloc[3, 1]) else None
+    }
+    
+    # Extraer items (filas 6-11)
+    items = []
+    for i in range(5, 11):
+        if pd.notna(df.iloc[i, 0]):
+            items.append({
+                "producto": df.iloc[i, 0],
+                "cantidad": float(df.iloc[i, 1]),
+                "precio_unitario": float(df.iloc[i, 2])
+            })
+    
+    # Extraer totales (filas 13-14)
+    totales = {
+        "iva": float(df.iloc[12, 2]),
+        "monto_total": float(df.iloc[13, 2])
+    }
+    
+    return {"encabezado": encabezado, "items": items, "totales": totales}
+
+
+def insert_invoice_from_excel(ruta_excel: str, estado: str = "Pendiente", anomalia: str = None) -> int:
+    """
+    Procesa un archivo Excel en el nuevo formato y lo inserta en la DB.
+    
+    Args:
+        ruta_excel: Path del archivo Excel con el formato nuevo
+        estado: 'Pendiente', 'Aprobada' o 'Rechazada'
+        anomalia: None, 'Normal' o 'Anomalía'
+        
+    Returns:
+        ID de la factura insertada
+    """
+    datos = procesar_factura_excel(ruta_excel)
+    
     conn = sqlite3.connect("data/facturas.db")
     cursor = conn.cursor()
     
     try:
         # Validación básica
-        if not items:
+        if not ["items"]:
             raise ValueError("La factura debe tener al menos un ítem")
         
         if estado not in ('Pendiente', 'Aprobada', 'Rechazada'):
             raise ValueError(f"Estado inválido: {estado}. Debe ser: Pendiente, Aprobada o Rechazada")
         # Calcular totales
-        neto = sum(item['cantidad'] * item['precio_unitario'] for item in items)
+        neto = sum(item['cantidad'] * item['precio_unitario'] for item in ["items"] )
         iva = neto * 0.19  # Ejemplo para Chile (19% IVA)
         total = neto + iva
 
         # 1. Insertar encabezado de factura
         cursor.execute('''
-        INSERT INTO facturas (
-            numero_factura, 
-            proveedor_id,
-            fecha_emision,
-            fecha_vencimiento,
-            monto_total,
-            estado,
-            anomalia,
-            comentarios
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        # Insertar encabezado
+        
+            INSERT INTO facturas (
+                numero_factura, proveedor_id, fecha_emision,
+                monto_total, comentarios, estado, anomalia
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
-            numero_factura,
-            proveedor_id,
-            fecha_emision,
-            fecha_vencimiento,
-            total,
+            datos["encabezado"]["numero_factura"],
+            datos["encabezado"]["proveedor_id"],
+            datos["encabezado"]["fecha_emision"],
+            datos["totales"]["monto_total"],
+            datos["encabezado"]["comentarios"],
             estado,
-            anomalia,
-            comentarios
+            anomalia
         ))
         factura_id = cursor.lastrowid
 
+
         # 2. Insertar ítems de detalle
-        for item in items:
+        for item in ["items"]:
             cursor.execute('''
             INSERT INTO detalle_factura (
                 factura_id,
@@ -151,7 +186,8 @@ def insert_invoice(
             ))
 
         conn.commit()
-        print(f"✅ Factura {numero_factura} insertada (ID: {factura_id})")
+
+        print(f"✅ Factura {datos['encabezado']['numero_factura']} insertada (ID: {factura_id})")
         return factura_id
 
     except sqlite3.IntegrityError as e:

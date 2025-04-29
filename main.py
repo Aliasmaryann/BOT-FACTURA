@@ -1,5 +1,5 @@
-from database import create_database, insert_invoice, obtener_historico_proveedor
-from invoice_processor import leer_facturas_excel, validar_factura, clasificar_factura
+from database import create_database, insert_invoice_from_excel, obtener_historico_proveedor
+from invoice_processor import procesar_factura_excel, validar_factura, clasificar_factura
 from ia_anomaly_detection import detectar_anomalias
 import os
 import sqlite3
@@ -10,90 +10,94 @@ from report_generator import ReportGenerator
 
 def main():
 
-    # --- RESET DE BASE DE DATOS (opcional, solo para desarrollo) ---
+    # Creacion de BD
     if not os.path.exists("data/facturas.db"):
         create_database()  # Elimina la base de datos existente
         print("🗑️ Base de datos creada")
 
-    create_database()  # Crea una nueva estructura limpia
+
 
     conn = sqlite3.connect("data/facturas.db")
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     print("Tablas existentes:", cursor.fetchall())
-    cursor.execute("PRAGMA table_info(facturas)")
-    print("Columnas de 'facturas':", cursor.fetchall())
     conn.close()    
 
-    facturas = leer_facturas_excel(r"C:\Users\alias\OneDrive\Escritorio\AIEP\Semestre 6\Automatizacion\factura_bot\data\facturas.xlsx")
+    ruta_excel = r"C:\Users\alias\OneDrive\Escritorio\AIEP\Semestre 6\Automatizacion\factura_bot\data\facturas.xlsx"
+    datos_factura = procesar_factura_excel(ruta_excel)
+    
     
     #deteccion de anomalias
-    montos = [f["monto"] for f in facturas]
+    montos = [item['precio_unitario'] * item['cantidad'] for item in datos_factura["items"]]
     anomalias = detectar_anomalias(montos)
     
-    for i, factura in enumerate(facturas):
-
-        errores = validar_factura(factura)
+    # Validación y clasificación
+    errores = validar_factura(datos_factura)
+    
 
         
-        if not errores:
-            # Obtener histórico del proveedor
-            historico = obtener_historico_proveedor(factura["proveedor"]) 
+    if not errores:
+        # Obtener histórico del proveedor
+        historico = obtener_historico_proveedor(datos_factura["encabezado"]["proveedor_id"]) 
 
-            # Clasificar la factura
-            estado, motivo = clasificar_factura(factura, historico)
+        # Clasificar la factura
+        estado, motivo = clasificar_factura(datos_factura, historico)
 
-            if estado == "Pendiente":
-                print(f"⚡ [PENDIENTE] Factura {factura['numero_factura']} - {motivo}")
-            elif estado == "Rechazada":
-                print(f"❌ [RECHAZADA] Factura {factura['numero_factura']} - {motivo}")
+        if estado == "Pendiente":
+            print(f"⚡ [PENDIENTE] Factura {datos_factura['encabezado']['numero_factura']} - {motivo}")
+        elif estado == "Rechazada":
+            print(f"❌ [RECHAZADA] Factura {datos_factura['encabezado']['numero_factura']} - {motivo}")
 
+        # Verificación de montos sospechosos (usando monto_total de los datos procesados)
+        if datos_factura["totales"]["monto_total"] > 1000000:  # Umbral ajustable
+            print(f"⚠️ Alerta: Monto sospechoso en factura {datos_factura['encabezado']['numero_factura']} (${datos_factura['totales']['monto_total']:,})")
 
-            if factura["monto"] > 1000000:  # Umbral ajustable
-                print(f"⚠️ Alerta: Monto sospechoso en factura {factura['numero_factura']} (${factura['monto']})")
-            if anomalias[i] == -1:
-                print(f"🚨 Alerta IA: Anomalía detectada en {factura['numero_factura']}")
-                print(f"""\n
-                ⚡ Factura {factura['numero_factura']} - {estado}
-                -----------------------------------------
-                Proveedor: {factura['proveedor']}
-                Monto: ${factura['monto']:,}
-                Motivo: {motivo}
-                Acción requerida: {'Sí' if estado == 'Pendiente' else 'No'}
-                """)
-            insert_invoice(
-                numero=factura["numero_factura"],
-                proveedor=factura["proveedor"],
-                monto=factura["monto"],
-                fecha=factura["fecha"],
-                anomalia=anomalias[i],
-                estado=estado,
-                comentarios=motivo
-            )
+        
 
-    
+        # Alertas
+        if any(a == -1 for a in anomalias):
+            print(f"🚨 Alerta IA: Anomalía detectada en factura {datos_factura['encabezado']['numero_factura']}")
+            print(f"""\n
+            ⚡ Factura {datos_factura['encabezado']['numero_factura']} - {estado}
+            -----------------------------------------
+            Proveedor ID: {datos_factura['encabezado']['proveedor_id']}
+            Monto Total: ${datos_factura['totales']['monto_total']:,}
+            Motivo: {motivo}
+            """)
+         # Insertar en base de datos
+        factura_id = insert_invoice_from_excel(
+            ruta_excel=ruta_excel,
+            estado=estado,
+            anomalia="Anomalía" if any(a == -1 for a in anomalias) else None
+        )
+        # Generación de reportes
+        print("\n🚨 Resumen de anomalías:")
+        conn = sqlite3.connect("data/facturas.db")
+        df_anomalias = pd.read_sql("""
+            SELECT f.numero_factura, p.nombre as proveedor, f.monto_total 
+            FROM facturas f
+            JOIN proveedores p ON f.proveedor_id = p.id
+            WHERE f.anomalia = 'Anomalía'
+        """, conn)
+        print(df_anomalias)
 
-    print("\n🚨 Resumen de anomalías:")
-    conn = sqlite3.connect("data/facturas.db")
-    df_anomalias = pd.read_sql("SELECT numero_factura, proveedor, monto FROM facturas WHERE anomalia = '-1'", conn)
-    print(df_anomalias)
-    conn.close()        
-    
-    print("Proceso completado. Anomalías detectadas:", anomalias)
-    
-    conn = sqlite3.connect("data/facturas.db")
-    df = pd.read_sql("SELECT * FROM facturas", conn)
-    print("\n📊 Contenido de la base de datos:")
-    print(df)
-    conn.close()
+            
+        print("\n📊 Contenido completo de la base de datos:")
+        df_facturas = pd.read_sql("""
+            SELECT f.id, f.numero_factura, p.nombre as proveedor, 
+                f.monto_total, f.estado, f.anomalia
+            FROM facturas f
+            JOIN proveedores p ON f.proveedor_id = p.id
+        """, conn)
+        print(df_facturas)
+        conn.close()
 
-    # Generar reportes
-    generador = ReportGenerator()
-    reporte = generador.generar_reporte_anomalias()
-    
-    # Guardar en otro formato
-    if not reporte.empty:
-        generador._guardar_reporte(reporte)
+        # Generar y guardar reportes
+        generador = ReportGenerator()
+        if not df_anomalias.empty:
+            generador.guardar_reporte(df_anomalias, "reporte_anomalias")
+        if not df_facturas.empty:
+            generador.guardar_reporte(df_facturas, "reporte_general")
 
 if __name__ == "__main__":
     print("🔹 Script iniciado...")  # Mensaje de prueba
