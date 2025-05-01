@@ -23,7 +23,9 @@ def main():
     print("Tablas existentes:", cursor.fetchall())
     conn.close()    
 
-    ruta_excel = r"C:\Users\alias\OneDrive\Escritorio\AIEP\Semestre 6\Automatizacion\factura_bot\data\facturas.xlsx"
+    #C:\Users\alias\OneDrive\Escritorio\AIEP\Semestre 6\Automatizacion\\data
+
+    ruta_excel = r"C:\Users\alias\OneDrive\Escritorio\AIEP\Semestre 6\Automatizacion\BOT-FACTURA\data\facturas.xlsx"
     datos_factura = procesar_factura_excel(ruta_excel)
     
     

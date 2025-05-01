@@ -139,13 +139,13 @@ def insert_invoice_from_excel(ruta_excel: str, estado: str = "Pendiente", anomal
     
     try:
         # Validación básica
-        if not ["items"]:
+        if not datos["items"]:
             raise ValueError("La factura debe tener al menos un ítem")
         
         if estado not in ('Pendiente', 'Aprobada', 'Rechazada'):
             raise ValueError(f"Estado inválido: {estado}. Debe ser: Pendiente, Aprobada o Rechazada")
         # Calcular totales
-        neto = sum(item['cantidad'] * item['precio_unitario'] for item in ["items"] )
+        neto = sum(item['cantidad'] * item['precio_unitario'] for item in datos["items"] )
         iva = neto * 0.19  # Ejemplo para Chile (19% IVA)
         total = neto + iva
 
@@ -170,7 +170,7 @@ def insert_invoice_from_excel(ruta_excel: str, estado: str = "Pendiente", anomal
 
 
         # 2. Insertar ítems de detalle
-        for item in ["items"]:
+        for item in datos["items"]:
             cursor.execute('''
             INSERT INTO detalle_factura (
                 factura_id,
