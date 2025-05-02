@@ -4,11 +4,64 @@ from ia_anomaly_detection import detectar_anomalias
 import os
 import sqlite3
 import pandas as pd
-from config import RUTA_EXCEL
+from config import RUTA_EXCEL, CONFIG, CONFIG_REPORTES
 from report_generator import ReportGenerator
+import shutil
 #bot_env\Scripts\activate
 
+# --------------------------
+# Funciones de apoyo
+# --------------------------
+def crear_estructura():
+    """Crea las carpetas necesarias si no existen"""
+    os.makedirs(CONFIG['ruta_inputs'], exist_ok=True)
+    os.makedirs(CONFIG['ruta_reportes'], exist_ok=True)
+    os.makedirs(CONFIG['ruta_procesadas'], exist_ok=True)
+
+def procesar_carpeta():
+    """Procesa todos los archivos Excel en la carpeta inputs"""
+    reporte_consolidado = []
+    
+    for archivo in os.listdir(CONFIG['ruta_inputs']):
+        if any(archivo.endswith(ext) for ext in CONFIG['formatos_soportados']):
+            ruta_completa = os.path.join(CONFIG['ruta_inputs'], archivo)
+            try:
+                print(f"\n🔹 Procesando: {archivo}")
+                
+                # Procesamiento de la factura
+                datos_factura = procesar_factura_excel(ruta_completa)
+                
+                # ... (aquí tu lógica actual de validación, inserción en BD, etc.)
+                
+                # Agregar datos para reporte consolidado
+                reporte_consolidado.append({
+                    'archivo': archivo,
+                    'numero_factura': datos_factura['encabezado']['numero_factura'],
+                    'monto_total': datos_factura['totales']['monto_total'],
+                    'estado': 'Procesado'
+                })
+                
+                # Mover archivo procesado
+                shutil.move(
+                    ruta_completa,
+                    os.path.join(CONFIG['ruta_procesadas'], archivo)
+                )
+            except Exception as e:
+                print(f"❌ Error procesando {archivo}: {str(e)}")
+    
+    # Generar reporte consolidado
+    if reporte_consolidado:
+        generador = ReportGenerator()
+        generador.generar_reporte(pd.DataFrame(reporte_consolidado))
+
+# --------------------------
+# Función principal
+# --------------------------
+
 def main():
+
+    print("🔹 Script iniciado...")
+    crear_estructura()
     # Valores por defecto
     estado = "Rechazada"
     motivo = "No procesado"
@@ -26,35 +79,27 @@ def main():
     try:
         create_database()
         print("✅ Base de datos creada")
-        
         # Verificación rápida
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        print("Tablas existentes:", cursor.fetchall())
-        conn.close()
+        verificar_tablas()
     except Exception as e:
         errores.append(f"Error al crear BD: {str(e)}")
   
 
-    ruta_excel = RUTA_EXCEL
-    if not os.path.exists(ruta_excel):
-        errores.append(f"Archivo Excel no encontrado en {ruta_excel}")
-    else:
-        try:
-            datos_factura = procesar_factura_excel(ruta_excel)
-            errores = validar_factura(datos_factura)
-            
+    reporte_consolidado = []
+    for archivo in os.listdir(CONFIG['ruta_inputs']):
+        if any(archivo.endswith(ext) for ext in CONFIG['formatos_soportados']):
+            ruta_completa = os.path.join(CONFIG['ruta_inputs'], archivo)
             try:
-                fecha_raw = datos_factura['encabezado'].get('fecha_emision', 'NO_EXISTE')
-                print("\n=== DEBUG ===")
-                print("Valor fecha:", repr(fecha_raw))
-                print("Tipo fecha:", type(fecha_raw))
-                print("Estructura completa disponible:", 'fecha_emision' in datos_factura['encabezado'])
-            except Exception as debug_error:
-                print("\n⚠️ Error en debug:", str(debug_error))
-
-            if not errores:
+                print(f"\n🔹 Procesando: {archivo}")
+                
+                # Procesar factura
+                datos_factura = procesar_factura_excel(ruta_completa)
+                errores = validar_factura(datos_factura)
+                
+                if errores:
+                    print(f"❌ Errores en {archivo}: {', '.join(errores)}")
+                    continue
+                
                 # Detección de anomalías
                 montos = [item['precio_unitario'] * item['cantidad'] for item in datos_factura["items"]]
                 anomalias = detectar_anomalias(montos)
@@ -62,41 +107,42 @@ def main():
                 # Clasificación
                 historico = obtener_historico_proveedor(datos_factura["encabezado"]["proveedor_id"])
                 estado, motivo = clasificar_factura(datos_factura, historico)
-
-
-                # Insertar en base de datos
+                
+                # Insertar en BD
                 factura_id = insert_invoice_from_excel(
-                    ruta_excel=ruta_excel,
+                    ruta_excel=ruta_completa,
                     estado=estado,
                     anomalia="Anomalía" if any(a == -1 for a in anomalias) else None
                 )
+                
+                # Agregar para reporte consolidado
+                reporte_consolidado.append({
+                    'archivo': archivo,
+                    'numero_factura': datos_factura['encabezado']['numero_factura'],
+                    'proveedor': datos_factura['encabezado']['proveedor_id'],
+                    'monto_total': datos_factura['totales']['monto_total'],
+                    'estado': estado,
+                    'motivo': motivo
+                })
+                
+                # Mover archivo procesado
+                shutil.move(ruta_completa, os.path.join(CONFIG['ruta_procesadas'], archivo))
+                
+                print(f"✅ Factura procesada: {datos_factura['encabezado']['numero_factura']}")
+                
+            except Exception as e:
+                print(f"❌ Error procesando {archivo}: {str(e)}")
 
-        except Exception as e:
-            errores.append(f"Error procesando factura: {str(e)}")
-
-    # Mostrar resultados (siempre seguro)
-    print(f"""\n
-    📄 Factura {datos_factura['encabezado']['numero_factura'] if 'datos_factura' in locals() else 'N/A'}
-    -----------------------------------------
-    Proveedor ID: {datos_factura['encabezado']['proveedor_id'] if 'datos_factura' in locals() else 'N/A'}
-    Monto Total: ${datos_factura['totales']['monto_total'] if 'datos_factura' in locals() else 0:,}
-    Estado: {estado}
-    Motivo: {motivo if not errores else ', '.join(errores)}
-    """)
+    # 3. Generación de reporte final
+    if reporte_consolidado:
+        print("\n📊 Resumen de procesamiento:")
+        df_reporte = pd.DataFrame(reporte_consolidado)
+        print(df_reporte.to_string(index=False))
+        
+        generador = ReportGenerator()
+        generador.generar_reporte_anomalias(df_reporte)
     
-
-    # Generación de reportes (solo si no hay errores)
-    if not errores and 'datos_factura' in locals():
-        if not errores and 'datos_factura' in locals():
-            reporte = ReportGenerator()
-            datos_reporte = {
-                'numero_factura': [datos_factura['encabezado']['numero_factura']],
-                'proveedor_id': [datos_factura['encabezado']['proveedor_id']],
-                'monto_total': [datos_factura['totales']['monto_total']],
-                'estado': [estado],
-                'motivo': [motivo]
-            }
-            reporte.generar_reporte_anomalias(datos_reporte)
+    print("🔹 Script finalizado.")
         
 
 if __name__ == "__main__":

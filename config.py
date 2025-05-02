@@ -19,3 +19,10 @@ CONFIG_REPORTES = {
         'color_filas': '#FFFFFF'
     }
 }
+CONFIG = {
+    'ruta_inputs': 'inputs',
+    'ruta_reportes': 'outputs/reportes',
+    'ruta_procesadas': 'outputs/facturas_procesadas',
+    'formatos_soportados': ['.xlsx', '.xls'],
+    'formato_reporte': 'xlsx'  # 'xlsx' o 'pdf'
+}
