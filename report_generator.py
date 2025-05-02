@@ -2,110 +2,104 @@ import sqlite3
 import pandas as pd
 import os
 from datetime import datetime
+from config import CONFIG_REPORTES
 
 print(pd.__version__)
 # Si necesitas configuraciones globales:
 #from config import UMBRAL_MONTO_SOSPECHOSO, CARPETA_REPORTES  
 
 class ReportGenerator:
-    def __init__(self, db_path="data/facturas.db"):
-        self.db_path = db_path
-        os.makedirs("outputs/reportes", exist_ok=True)
-        self.UMBRAL_DEFAULT = 1000000  # Valor por defecto
+    def __init__(self):
+        os.makedirs(CONFIG_REPORTES['ruta_salida'], exist_ok=True)
+        
 
-    def generar_reporte_anomalias(self, umbral=None):
+    def generar_reporte_anomalias(self, datos, umbral=None):
         """
-        Genera reporte consolidado de facturas con anomalías.
-        
-        Args:
-            umbral (float): Monto mínimo para alerta. Si es None, usa el de config.py
-        
-        Returns:
-            DataFrame: Pandas DataFrame con resultados
+        Genera reporte 
         """
         try:
-            umbral = umbral if umbral is not None else self.UMBRAL_DEFAULT
-            with sqlite3.connect(self.db_path) as conn:
+            # Convertir a DataFrame manejando diferentes casos
+            if isinstance(datos, dict):
+                # Si los valores no son listas, los convertimos
+                if all(not isinstance(v, (list, pd.Series)) for v in datos.values()):
+                    df = pd.DataFrame([datos])  # Crear DF de una sola fila
+                else:
+                    df = pd.DataFrame(datos)
+            elif isinstance(datos, pd.DataFrame):
+                df = datos
+            else:
+                raise ValueError("Formato de datos no soportado")
+
+            if umbral is not None:
+                df = df[df['monto_total'] > umbral]
+
+            # Generar reporte en los formatos configurados
+            formatos = CONFIG_REPORTES.get('formatos', ['excel'])
+            resultados = []
+
+            for formato in formatos:
+                if formato == 'pdf':
+                    resultados.append(self._generar_pdf(df))
+                else:
+                    resultados.append(self._guardar_reporte(df, formato))
             
-                query = f"""
-                SELECT 
-                    numero_factura AS "N° Factura",
-                    proveedor AS "Proveedor",
-                    printf("%,.2f", monto) AS "Monto",
-                    fecha AS "Fecha",
-                    CASE 
-                        WHEN anomalia = '-1' THEN '🚨 Anomalía IA'
-                        WHEN monto > {umbral} THEN '⚠️ Monto Alto'
-                    END AS "Alerta"
-                FROM facturas 
-                WHERE anomalia = '-1' OR monto > {umbral}
-                ORDER BY monto DESC
-                """
-                
-                df = pd.read_sql(query, conn)
-                
-                if not df.empty:
-                    self._guardar_reporte(df)
-                    self._imprimir_consola(df)
-                
-                return df
+            # Mostrar en consola
+            self._imprimir_consola(df)
             
+            return self._guardar_reporte(df)
+
         except Exception as e:
             print(f"Error generando reporte: {str(e)}")
-            return pd.DataFrame()
-        
+            return False 
 
-    def _guardar_reporte(self, df, formatos=["csv", "excel", "pdf"]):
-        """Guarda reporte en archivo"""
-        fecha = datetime.now().strftime("%Y%m%d_%H%M")
-        resultados = []
-        
-        extensiones = {"excel": "xlsx", "csv": "csv", "pdf": "pdf"}
+    def _guardar_reporte(self, df, formato="xlsx"):
+        try:
+            fecha = datetime.now().strftime("%Y%m%d_%H%M")
+            ruta = f"{CONFIG_REPORTES['ruta_salida']}/reporte_{fecha}.{formato}"
+            
+            if formato == "xlsx":
+                df.to_excel(ruta, index=False, engine='openpyxl')
+            elif formato == "csv":
+                df.to_csv(ruta, index=False)
+            
+            print(f"✓ Reporte {formato} guardado: {ruta}")
+            return True
+        except Exception as e:
+            print(f"Error al guardar {formato}: {str(e)}")
+            return False
+    
+    def _generar_pdf(self, df):
+        """Genera PDF usando ReportLab"""
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+            from reportlab.lib import colors
+            
+            fecha = datetime.now().strftime("%Y%m%d_%H%M")
+            ruta = f"{CONFIG_REPORTES['ruta_salida']}/reporte_{fecha}.pdf"
+            
+            doc = SimpleDocTemplate(ruta, pagesize=letter)
+            elementos = []
+            
+            datos = [df.columns.to_list()] + df.values.tolist()
+            tabla = Table(datos)
+            
+            estilo = TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.grey),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                ('GRID', (0,0), (-1,-1), 1, colors.black)
+            ])
+            tabla.setStyle(estilo)
+            elementos.append(tabla)
+            
+            doc.build(elementos)
+            print(f"✓ Reporte PDF guardado: {ruta}")
+            return True
+            
+        except Exception as e:
+            print(f"Error al generar PDF: {str(e)}")
+            return False
 
-        for formato in formatos:
-            try:
-                ext = extensiones.get(formato, formato)  # usar extensión real
-                ruta = f"outputs/reportes/reporte_{fecha}.{ext}"
-                
-                if formato == "excel":
-                    df.to_excel(ruta, index=False, engine='openpyxl')
-                elif formato == "csv":
-                    df.to_csv(ruta, index=False)
-                
-                elif formato == "pdf":
-                    from reportlab.lib.pagesizes import letter
-                    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
-                    from reportlab.lib import colors
-                    
-                    doc = SimpleDocTemplate(ruta, pagesize=letter)
-                    elementos = []
-                    
-                    # Convertir DataFrame a lista (incluyendo headers)
-                    datos = [df.columns.to_list()] + df.values.tolist()
-
-                    tabla = Table(datos)
-                    estilo = TableStyle([
-                        ('BACKGROUND', (0,0), (-1,0), colors.grey),
-                        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                        ('FONTSIZE', (0,0), (-1,0), 12),
-                        ('BOTTOMPADDING', (0,0), (-1,0), 12),
-                        ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-                        ('GRID', (0,0), (-1,-1), 1, colors.black)
-                    ])
-                    tabla.setStyle(estilo)
-                    elementos.append(tabla)
-                    
-                    doc.build(elementos)
-                
-                print(f"\n📁 Reporte guardado en: {ruta}")
-                resultados.append(True)
-
-            except Exception as e:
-                print(f"❌ Error al guardar reporte: {str(e)}")
-                resultados.append(False)
-        
-        return all(resultados)
 
     def _imprimir_consola(self, df):
         """Muestra reporte formateado en consola"""
@@ -119,5 +113,12 @@ class ReportGenerator:
 
 # Uso rápido para pruebas
 if __name__ == "__main__":
+     # Datos de ejemplo
+    datos_ejemplo = {
+        'factura': ['F001', 'F002'],
+        'monto_total': [500000, 1500000],
+        'proveedor': ['Prov1', 'Prov2']
+    }
+    
     generador = ReportGenerator()
-    generador.generar_reporte_anomalias(umbral=1000000)
+    generador.generar_reporte(datos_ejemplo, umbral=1000000)

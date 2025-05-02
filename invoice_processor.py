@@ -1,68 +1,100 @@
+from openpyxl import load_workbook
 import pandas as pd
 from typing import List, Dict, Optional, Tuple
+import os
+from datetime import datetime
+
+ruta_excel = r"C:\Users\alias\OneDrive\Escritorio\AIEP\Semestre 6\Automatizacion\BOT-FACTURA\data\facturas.xlsx"
+print(f"Existe archivo: {os.path.exists(ruta_excel)}")
+print(f"Es legible: {os.access(ruta_excel, os.R_OK)}")
 
 def procesar_factura_excel(ruta: str) -> Dict:
-    
     try:
-        df = pd.read_excel(ruta, header=None, usecols="A:D")
+        wb = load_workbook(ruta, data_only=True)
+        sheet = wb.active
+        
+        fecha_celda = sheet['C2'].value
+        fecha_emision = None  # Valor por defecto
 
-        if len(df) < 6:
-            raise ValueError("Archivo demasiado corto o mal estructurado")
+        if fecha_celda:
+            try:
+                if hasattr(fecha_celda, 'strftime'):  # Si es objeto fecha
+                    fecha_obj = fecha_celda
+                else:  # Si es string
+                    # Intenta parsear desde formato DD-MM-YYYY
+                    fecha_obj = datetime.strptime(str(fecha_celda), "%d-%m-%Y")
+                
+                # Convertir a formato SQLite (YYYY-MM-DD)
+                fecha_emision = fecha_obj.strftime("%Y-%m-%d")
+                
+            except (ValueError, AttributeError) as e:
+                print(f"⚠️ Error al procesar fecha (celda C2): {str(e)}")
+       
 
-        # Extraer encabezado
+        # 1. Encabezado (ajusta las celdas a tu Excel real)
         encabezado = {
-            "numero_factura": df.iloc[1, 1],
-            "proveedor_id": int(float(df.iloc[2, 1])) if pd.notna(df.iloc[2, 1]) else None,  # Conversión segura
-
-            "fecha_emision": pd.to_datetime(df.iloc[3, 1]).strftime("%d-%m-%Y") if pd.notna(df.iloc[3, 1]) else None,
-            "comentarios": df.iloc[4, 1] if pd.notna(df.iloc[4, 1]) else None
+            "numero_factura": sheet['A2'].value,
+            "proveedor_id": int(sheet['B2'].value) if sheet['B2'].value else None,
+            "fecha_emision": fecha_emision,
+            "comentarios": str(sheet['D2'].value) if sheet['D2'].value else None
         }
         
-        # Extraer items
+        # 2. Items (con while y control explícito)
         items = []
-        row = 6  
-        while row < len(df):
-
-            c_col = df.iloc[row, 2]
-            d_col = df.iloc[row, 3]
-            # Condiciones para detectar el final de los ítems:
-            # - Si la columna B está vacía Y (la columna C o D contiene "IVA" o "TOTAL")
-            if isinstance(c_col, str) and any(x in c_col.lower() for x in ["iva", "total"]):
-                break
+        row = 6
+        max_row = sheet.max_row
+        
+        while row <= max_row:
+            celda_producto = sheet[f'A{row}']
+            celda_cantidad = sheet[f'B{row}']
+            celda_precio = sheet[f'C{row}']
             
-            # Si la fila tiene datos de producto (columna B no vacía)
-            if pd.notna(df.iloc[row, 1]):
+            # Condición de salida (si encuentra celda vacía o texto "total")
+            if not celda_producto.value or "total" in str(celda_producto.value).lower():
+                break
+                
+            # Procesar ítem solo si hay producto
+            if celda_producto.value:
                 try:
-                    cantidad = float(c_col)
-                    precio_unitario = float(d_col)
-                    producto = str(df.iloc[row, 1]).strip()
                     items.append({
-                        "producto": producto,
-                        "cantidad": cantidad,
-                        "precio_unitario": precio_unitario
+                        "producto": str(celda_producto.value).strip(),
+                        "cantidad": float(celda_cantidad.value) if celda_cantidad.value else 0.0,
+                        "precio_unitario": float(celda_precio.value) if celda_precio.value else 0.0
                     })
-                except Exception as e:
-                    print(f"⚠️ Fila {row+1} ignorada (datos inválidos): {str(e)}")
-            row += 1
+                except (ValueError, TypeError) as e:
+                    print(f"Fila {row}: Error en datos - {e}")
+            
+            row += 1  # Incremento dentro del while!
         
-        # --- 3. Extraer totales (busca "IVA" y "TOTAL" en columna C) ---
+        # 3. Totales (busca desde el final)
         totales = {"iva": 0.0, "monto_total": 0.0}
-        
-        for row_total in range(row, len(df)):
-            celda_c = str(df.iloc[row_total, 2]).lower()
-            celda_d = df.iloc[row_total, 3]
+        # Obtener IVA de D13
+        try:
+            iva_celda = sheet['D13'].value
+            if iva_celda is not None:
+                totales["iva"] = float(iva_celda)
+        except (ValueError, TypeError) as e:
+            print(f"Error al convertir IVA: {e}")
 
-            if "iva" in celda_c and pd.notna(celda_d):
-                totales["iva"] = float(celda_d)
-            elif "total" in celda_c and pd.notna(celda_d):
-                totales["monto_total"] = float(celda_d)
+        # Obtener Monto Total de D14
+        try:
+            total_celda = sheet['D14'].value
+            if total_celda is not None:
+                totales["monto_total"] = float(total_celda)
+        except (ValueError, TypeError) as e:
+            print(f"Error al convertir Monto Total: {e}")
+
+        # Si no se encontraron valores, calcularlos como respaldo
+        if totales["monto_total"] == 0.0 and items:
+            subtotal = sum(item["cantidad"] * item["precio_unitario"] for item in items)
+            totales["monto_total"] = subtotal + totales["iva"]
 
         return {
             "encabezado": encabezado,
             "items": items,
             "totales": totales
         }
-
+        
     except Exception as e:
         raise ValueError(f"Error al procesar Excel: {str(e)}")
 
