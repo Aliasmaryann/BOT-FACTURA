@@ -3,15 +3,7 @@ import numpy as np
 from typing import List
 
 def detectar_anomalias(montos: List[float]) -> List[int]:
-    """
-    Detecta anomalías en una lista de montos usando Isolation Forest.
     
-    Args:
-        montos: Lista de montos a analizar (pueden ser subtotales o montos totales)
-        
-    Returns:
-        Lista con predicciones: -1 para anomalía, 1 para normal
-    """
     try:
         if not montos:
             return []

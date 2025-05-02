@@ -2,7 +2,9 @@ from openpyxl import load_workbook
 import pandas as pd
 from typing import List, Dict, Optional, Tuple
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import sqlite3
+from config import CONFIG
 
 ruta_excel = r"C:\Users\alias\OneDrive\Escritorio\AIEP\Semestre 6\Automatizacion\BOT-FACTURA\data\facturas.xlsx"
 print(f"Existe archivo: {os.path.exists(ruta_excel)}")
@@ -26,6 +28,15 @@ def procesar_factura_excel(ruta: str) -> Dict:
                 
                 # Convertir a formato SQLite (YYYY-MM-DD)
                 fecha_emision = fecha_obj.strftime("%Y-%m-%d")
+
+                 # Validación de fecha no futura y no mayor a 2 años
+                hoy = datetime.now().date()
+                fecha_factura = fecha_obj.date()
+                max_antiguedad = hoy - timedelta(days=730)  # 2 años
+                if fecha_factura > hoy:
+                    raise ValueError("Fecha de factura no puede ser futura")
+                if fecha_factura < max_antiguedad:
+                    raise ValueError("Fecha de factura no puede tener más de 2 años de antigüedad")
                 
             except (ValueError, AttributeError) as e:
                 print(f"⚠️ Error al procesar fecha (celda C2): {str(e)}")
@@ -43,6 +54,7 @@ def procesar_factura_excel(ruta: str) -> Dict:
         items = []
         row = 6
         max_row = sheet.max_row
+        productos_vistos = set()  # Para validar items duplicados
         
         while row <= max_row:
             celda_producto = sheet[f'A{row}']
@@ -56,6 +68,24 @@ def procesar_factura_excel(ruta: str) -> Dict:
             # Procesar ítem solo si hay producto
             if celda_producto.value:
                 try:
+                    producto = str(celda_producto.value).strip()
+                    cantidad = float(celda_cantidad.value) if celda_cantidad.value else 0.0
+                    precio = float(celda_precio.value) if celda_precio.value else 0.0
+                    
+                    # Validación de cantidad (positiva y < 10,000)
+                    if cantidad <= 0:
+                        raise ValueError(f"Fila {row}: Cantidad debe ser positiva")
+                    if cantidad >= 10000:
+                        raise ValueError(f"Fila {row}: Cantidad excede límite (10,000)")
+                    
+                    # Validación de item duplicado
+                    item_key = (producto.lower(), precio)
+                    if item_key in productos_vistos:
+                        raise ValueError(f"Fila {row}: Item duplicado ({producto} - ${precio})")
+                    productos_vistos.add(item_key)
+                    
+
+
                     items.append({
                         "producto": str(celda_producto.value).strip(),
                         "cantidad": float(celda_cantidad.value) if celda_cantidad.value else 0.0,
@@ -66,6 +96,20 @@ def procesar_factura_excel(ruta: str) -> Dict:
             
             row += 1  # Incremento dentro del while!
         
+        # Validación de número de factura duplicado
+        if encabezado["numero_factura"]:
+            try:
+                conn = sqlite3.connect(CONFIG['ruta_bd'])
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM facturas WHERE numero_factura = ?", 
+                             (encabezado["numero_factura"],))
+                if cursor.fetchone() is not None:
+                    raise ValueError(f"Factura {encabezado['numero_factura']} ya existe en el sistema")
+            except sqlite3.Error as e:
+                print(f"⚠️ Advertencia: No se pudo verificar duplicado en BD: {str(e)}")
+            finally:
+                conn.close()
+
         # 3. Totales (busca desde el final)
         totales = {"iva": 0.0, "monto_total": 0.0}
         # Obtener IVA de D13

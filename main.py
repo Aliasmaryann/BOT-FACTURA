@@ -8,7 +8,7 @@ from config import RUTA_EXCEL, CONFIG, CONFIG_REPORTES
 from report_generator import ReportGenerator
 import shutil
 #bot_env\Scripts\activate
-
+db_path = CONFIG['ruta_bd']
 # --------------------------
 # Funciones de apoyo
 # --------------------------
@@ -67,7 +67,7 @@ def main():
     motivo = "No procesado"
     errores = []
     
-    db_path = "data/facturas.db"
+    db_path = CONFIG['ruta_bd']
     # Eliminar BD si existe
     if os.path.exists(db_path):
         try:
