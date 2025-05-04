@@ -36,7 +36,6 @@ def create_database():
         ''')
         print("✅ Tabla 'facturas' verificada/creada")
         
-        # Crear tabla detalle_factura
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS detalle_factura (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,7 +50,6 @@ def create_database():
         print("✅ Tabla 'detalle_factura' verificada/creada")
         conn.commit()
             
-        
     except Exception as e:
         print(f"❌ Error al crear tablas: {e}")
         if conn:
@@ -65,7 +63,6 @@ def create_database():
 def insert_invoice_from_excel(ruta_excel: str, estado: str = "Pendiente", anomalia: str = None) -> int:
     
     datos = procesar_factura_excel(ruta_excel)
-    
     conn = sqlite3.connect("data/facturas.db")
     cursor = conn.cursor()
     
@@ -77,7 +74,7 @@ def insert_invoice_from_excel(ruta_excel: str, estado: str = "Pendiente", anomal
         if estado not in ('Pendiente', 'Aprobada', 'Rechazada'):
             raise ValueError(f"Estado inválido: {estado}. Debe ser: Pendiente, Aprobada o Rechazada")
 
-        # 1. Insertar encabezado de factura
+        # Insertar encabezado de factura
         cursor.execute('''
             INSERT INTO facturas (
                 numero_factura, 
@@ -99,7 +96,7 @@ def insert_invoice_from_excel(ruta_excel: str, estado: str = "Pendiente", anomal
         ))
         factura_id = cursor.lastrowid
 
-        # 2. Insertar ítems de detalle
+        # Insertar ítems de detalle
         for item in datos["items"]:
             cursor.execute('''
             INSERT INTO detalle_factura (
@@ -143,15 +140,13 @@ def obtener_historico_proveedor(nombre_proveedor: str) -> dict:
     conn = sqlite3.connect("data/facturas.db")
     try:
         cursor = conn.cursor()
-        
-        # 1. Verificar si el proveedor existe en la tabla proveedores
+        # Verificar si el proveedor existe en la tabla proveedores
         cursor.execute('''
             SELECT id, monto_promedio, activo 
             FROM proveedores 
             WHERE nombre = ?
         ''', (nombre_proveedor,))
         prov_data = cursor.fetchone()
-        
         
         if not prov_data:
             return None 

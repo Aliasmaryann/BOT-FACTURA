@@ -2,16 +2,13 @@ from database import create_database, insert_invoice_from_excel, obtener_histori
 from invoice_processor import procesar_factura_excel, validar_factura, clasificar_factura
 from ia_anomaly_detection import detectar_anomalias
 import os
-import sqlite3
 import pandas as pd
-from config import RUTA_EXCEL, CONFIG, CONFIG_REPORTES
+from config import CONFIG
 from report_generator import ReportGenerator
 import shutil
 #bot_env\Scripts\activate
 db_path = CONFIG['ruta_bd']
-# --------------------------
-# Funciones de apoyo
-# --------------------------
+
 def crear_estructura():
     """Crea las carpetas necesarias si no existen"""
     os.makedirs(CONFIG['ruta_inputs'], exist_ok=True)
@@ -19,7 +16,6 @@ def crear_estructura():
     os.makedirs(CONFIG['ruta_procesadas'], exist_ok=True)
 
 def procesar_carpeta():
-    """Procesa todos los archivos Excel en la carpeta inputs"""
     reporte_consolidado = []
     
     for archivo in os.listdir(CONFIG['ruta_inputs']):
@@ -31,8 +27,6 @@ def procesar_carpeta():
                 # Procesamiento de la factura
                 datos_factura = procesar_factura_excel(ruta_completa)
                 
-                # ... (aquí tu lógica actual de validación, inserción en BD, etc.)
-                
                 # Agregar datos para reporte consolidado
                 reporte_consolidado.append({
                     'archivo': archivo,
@@ -40,7 +34,7 @@ def procesar_carpeta():
                     'monto_total': datos_factura['totales']['monto_total'],
                     'estado': 'Procesado'
                 })
-                
+
                 # Mover archivo procesado
                 shutil.move(
                     ruta_completa,
@@ -53,10 +47,6 @@ def procesar_carpeta():
     if reporte_consolidado:
         generador = ReportGenerator()
         generador.generar_reporte(pd.DataFrame(reporte_consolidado))
-
-# --------------------------
-# Función principal
-# --------------------------
 
 def main():
 
@@ -146,6 +136,4 @@ def main():
         
 
 if __name__ == "__main__":
-    print("🔹 Script iniciado...")  # Mensaje de prueba
     main()
-    print("🔹 Script finalizado.")  # Confirmación de ejecución

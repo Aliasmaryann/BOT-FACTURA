@@ -16,14 +16,13 @@ def procesar_factura_excel(ruta: str) -> Dict:
         sheet = wb.active
         
         fecha_celda = sheet['C2'].value
-        fecha_emision = None  # Valor por defecto
+        fecha_emision = None  
 
         if fecha_celda:
             try:
                 if hasattr(fecha_celda, 'strftime'):  # Si es objeto fecha
                     fecha_obj = fecha_celda
                 else:  # Si es string
-                    # Intenta parsear desde formato DD-MM-YYYY
                     fecha_obj = datetime.strptime(str(fecha_celda), "%d-%m-%Y")
                 
                 # Convertir a formato SQLite (YYYY-MM-DD)
@@ -32,7 +31,7 @@ def procesar_factura_excel(ruta: str) -> Dict:
                  # Validación de fecha no futura y no mayor a 2 años
                 hoy = datetime.now().date()
                 fecha_factura = fecha_obj.date()
-                max_antiguedad = hoy - timedelta(days=730)  # 2 años
+                max_antiguedad = hoy - timedelta(days=730)
                 if fecha_factura > hoy:
                     raise ValueError("Fecha de factura no puede ser futura")
                 if fecha_factura < max_antiguedad:
@@ -42,7 +41,7 @@ def procesar_factura_excel(ruta: str) -> Dict:
                 print(f"⚠️ Error al procesar fecha (celda C2): {str(e)}")
        
 
-        # 1. Encabezado (ajusta las celdas a tu Excel real)
+        # 1. Encabezado
         encabezado = {
             "numero_factura": sheet['A2'].value,
             "proveedor_id": int(sheet['B2'].value) if sheet['B2'].value else None,
@@ -50,18 +49,18 @@ def procesar_factura_excel(ruta: str) -> Dict:
             "comentarios": str(sheet['D2'].value) if sheet['D2'].value else None
         }
         
-        # 2. Items (con while y control explícito)
+        # Items
         items = []
         row = 6
         max_row = sheet.max_row
-        productos_vistos = set()  # Para validar items duplicados
+        productos_vistos = set()  # validar items duplicados
         
         while row <= max_row:
             celda_producto = sheet[f'A{row}']
             celda_cantidad = sheet[f'B{row}']
             celda_precio = sheet[f'C{row}']
             
-            # Condición de salida (si encuentra celda vacía o texto "total")
+            # Condición de salida 
             if not celda_producto.value or "total" in str(celda_producto.value).lower():
                 break
                 

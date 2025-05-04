@@ -8,13 +8,12 @@ def detectar_anomalias(montos: List[float]) -> List[int]:
         if not montos:
             return []
             
-        # Convertimos a array numpy y redimensionamos
         X = np.array(montos).reshape(-1, 1)
         
-        # Configuración del modelo (ajustable)
+        # Configuración del modelo 
         model = IsolationForest(
-            contamination=0.05,  # 5% de valores como anomalías (ajustable)
-            random_state=42      # Para reproducibilidad
+            contamination=0.05,  # 5% de valores como anomalías
+            random_state=42     
         )
         
         # Entrenamiento y predicción
@@ -22,4 +21,4 @@ def detectar_anomalias(montos: List[float]) -> List[int]:
         
     except Exception as e:
         print(f"⚠️ Error en detección de anomalías: {str(e)}")
-        return [1] * len(montos)  # Retorna todos como normales en caso de error
+        return [1] * len(montos) 
